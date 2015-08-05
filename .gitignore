@@ -2,6 +2,9 @@
 elm-stuff
 elm.js
 
+# Comment out if you want a custom HTML file
+index.html
+
 # Elm test artifacts
 elm-io.sh
 raw-test.js
