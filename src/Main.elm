@@ -14,6 +14,8 @@ import Maybe exposing (Maybe (..))
 import Char
 import Keyboard
 
+import Debug
+
 import Native.Now
 
 
@@ -23,7 +25,7 @@ guessedLetter = Signal.map (Char.fromCode >> (Guess >> Just)) Keyboard.presses
 
 main : Signal Html
 main =
-  start { model = randomModel, view = view, update = update, actions = [guessedLetter]}
+  start { model = randomGame, view = view, update = update, actions = [guessedLetter]}
 
 
 type alias App model action =
@@ -52,12 +54,16 @@ start app =
     Signal.map (app.view address) model
 
 
-type alias Model =
+type alias Round =
   { word : String
   , guesses : Set Char
   , maxGuesses : Int
   }
 
+type alias Game =
+  { round : Round
+  , seed : Seed
+  }
 
 {-| WARNING: SIDE-EFFECTS -}
 seed : Seed
@@ -74,14 +80,25 @@ defaultWord : String
 defaultWord = "hello"
 
 
-randomModel : Model
-randomModel =
-  Random.generate model' seed
+randomGame : Game
+randomGame =
+  Random.generate game' seed
   |> fst
 
 
-model' : Generator Model
-model' =
+game' : Generator Game
+game' =
+  Random.customGenerator <| (\seed ->
+    let
+      (round, seed') = Random.generate round' seed
+    in
+      ({ round = round, seed = seed'}, seed')
+
+  )
+
+
+round' : Generator Round
+round' =
   let
     wordsCount =
       Array.length words - 1
@@ -99,12 +116,12 @@ model' =
           |> Maybe.withDefault defaultWord
 
       in
-        (model word, seed')
+        (round word, seed')
     )
 
 
-model : String -> Model
-model word =
+round : String -> Round
+round word =
   { word = word
   , guesses = Set.empty
   , maxGuesses = 5
@@ -116,25 +133,36 @@ type Action
   | Reset
 
 
-update : Action -> Model -> Model
-update action model =
+update : Action -> Game -> Game
+update action game =
   case action of
     Guess char ->
       let
+        model = game.round
+
         newGuesses =
           if  | Char.isLower char -> Set.insert char model.guesses
               | Char.isUpper char -> Set.insert (Char.toLower char) model.guesses
               | otherwise -> model.guesses
+
+        updatedRound =
+          { model | guesses <- newGuesses }
       in
-        { model | guesses <- newGuesses }
+        { game | round <- updatedRound }
 
     Reset ->
-      randomModel
+      let
+        (newRound, seed') = Random.generate round' game.seed
+
+      in
+        { round = newRound, seed = seed' }
 
 
-view : Signal.Address Action -> Model -> Html
-view address model =
+view : Signal.Address Action -> Game -> Html
+view address game =
   let
+    model = game.round
+
     wordChars =
       String.toLower model.word
       |> String.toList
@@ -153,16 +181,46 @@ view address model =
     maskedWord =
       String.map mask model.word
 
-  in
-    div
-      []
-      [ div [] [ text ("Word: " ++ maskedWord) ]
-      , div [] [ text ("Misses: " ++ (toString misses)) ]
-      , button
-          [ onClick address Reset ]
-          [ text "Reset" ]
-      ]
+    resetButton =
+      button
+        [ onClick address Reset ]
+        [ text "Reset" ]
 
+    playingView =
+      div
+        []
+        [ div [] [ text ("Word: " ++ maskedWord) ]
+        , div [] [ text ("Misses: " ++ (toString misses)) ]
+        , resetButton
+        ]
+
+    wonView =
+      div []
+        [ text ("You won! The word was: " ++ model.word)
+        , resetButton
+        ]
+
+    lostView =
+      div []
+        [ text ("You lost! The word was: " ++ model.word)
+        , resetButton
+        ]
+
+    won =
+      wordChars `eq` model.guesses
+
+    lost =
+      not won && (Set.toList misses |> List.length) >= model.maxGuesses
+  in
+    if  | won -> wonView
+        | lost -> lostView
+        | otherwise -> playingView
+
+
+eq : Set comparable -> Set comparable -> Bool
+eq a b =
+  Set.diff a b
+  |> Set.isEmpty
 
 onEnter : Address a -> a -> Attribute
 onEnter address value =
